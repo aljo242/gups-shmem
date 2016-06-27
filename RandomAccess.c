@@ -377,7 +377,7 @@ HPCC_SHMEMRandomAccess(HPCC_Params *params) {
   
 #if defined(USE_MPI3_RMA)
   MPI_Barrier(MPI_COMM_WORLD);
-  MPI_Allreduce(&NumErrors, &GlbNumErrors, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(&NumErrors, &GlbNumErrors, 1, MPI_S64INT_T, MPI_SUM, MPI_COMM_WORLD);
   MPI_Barrier(MPI_COMM_WORLD);
 #else
   shmem_barrier_all(); 

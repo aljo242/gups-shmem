@@ -44,6 +44,24 @@ extern s64Int starts (u64Int);
 #define MAX_RECV					1
 #endif
 
+#ifdef USE_MPI3_RMA
+#ifdef LONG_IS_64BITS
+#ifndef MPI_S64INT_T
+#define MPI_S64INT_T MPI_LONG
+#endif
+#ifndef MPI_U64INT_T
+#define MPI_U64INT_T MPI_UNSIGNED_LONG
+#endif
+#else
+#ifndef MPI_S64INT_T
+#define MPI_S64INT_T MPI_LONG_LONG
+#endif
+#ifndef MPI_U64INT_T
+#define MPI_U64INT_T MPI_UNSIGNED_LONG_LONG
+#endif
+#endif
+#endif
+
 extern u64Int *HPCC_Table;
 
 extern u64Int LocalSendBuffer[LOCAL_BUFFER_SIZE];

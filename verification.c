@@ -59,7 +59,7 @@ HPCC_Power2NodesSHMEMRandomAccessCheck(u64Int logTableSize,
                                 int logNumProcs,
                                 int NumProcs,
                                 int MyProc,
-				                u64Int ProcNumUpdates,
+				u64Int ProcNumUpdates,
                                 s64Int *NumErrors)
 {
 
