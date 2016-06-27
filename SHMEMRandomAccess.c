@@ -228,10 +228,13 @@ Power2NodesRandomAccessUpdate(u64Int logTableSize,
   ran = starts(4*GlobalStartMyProc);
 #if defined(USE_MPI3_RMA)
   // create *updates* & *count* window
-  MPI_Win_create(updates, sizeof(s64Int)*MAXTHREADS, sizeof(s64Int), MPI_INFO_NULL, MPI_COMM_WORLD, &updates_win);
+  MPI_Win_create(&updates, sizeof(s64Int)*MAXTHREADS, sizeof(s64Int), MPI_INFO_NULL, MPI_COMM_WORLD, &updates_win);
   MPI_Win_lock_all(MPI_MODE_NOCHECK, updates_win);
-  MPI_Win_create(&count, sizeof(s64Int), sizeof(s64Int), MPI_INFO_NULL, MPI_COMM_WORLD, &count_win);
+
+  s64Int count_base;
+  MPI_Win_allocate(sizeof(s64Int), sizeof(s64Int), MPI_INFO_NULL, MPI_COMM_WORLD, &count_base, &count_win);
   MPI_Win_lock_all(MPI_MODE_NOCHECK, count_win); 
+  
   MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
@@ -254,7 +257,7 @@ Power2NodesRandomAccessUpdate(u64Int logTableSize,
 
 #if defined(USE_MPI3_RMA)
       MPI_Fetch_and_op(&count, &remotecount, MPI_LONG, remote_proc, 0, MPI_SUM, count_win);
-      MPI_Win_flush(remote_proc, count_win);
+      MPI_Win_flush_local(remote_proc, count_win);
       MPI_Put(&ran, 1, MPI_LONG, remote_proc, remotecount, 1, MPI_LONG, updates_win);
       MPI_Win_flush(remote_proc, updates_win);
       MPI_Barrier(MPI_COMM_WORLD);
