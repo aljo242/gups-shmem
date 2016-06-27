@@ -290,6 +290,7 @@ int main(int argc, char **argv)
   time_t currentTime;
   int provided;
 
+
 #if defined(USE_MPI3_RMA)
   MPI_Init(&argc, &argv);
 #else
