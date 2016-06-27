@@ -117,7 +117,6 @@
  * hybrid models.
  * Author: Siddhartha Jana
  */
-
 /*
  * OpenSHMEM version:
  *
@@ -159,7 +158,11 @@
 #include <hpcc.h>
 #include <stdio.h>
 #include "RandomAccess.h"
+#if defined(USE_MPI3_RMA)
+#include <mpi.h>
+#else
 #include <shmem.h>
+#endif
 #define MAXTHREADS 256
 #define CHUNK    1
 #define CHUNKBIG (32*CHUNK)
@@ -178,7 +181,12 @@ u64Int targetBuf[sizeof(srcBuf) / sizeof(u64Int)];
 static s64Int count;
 s64Int updates[MAXTHREADS];
 static s64Int ran;
+#if defined(USE_MPI3_RMA)
+MPI_Win count_win;
+MPI_Win updates_win;
+#endif
 
+// Note: make this function accept comm?
 void
 Power2NodesRandomAccessUpdate(u64Int logTableSize,
                                  u64Int TableSize,
@@ -206,13 +214,26 @@ Power2NodesRandomAccessUpdate(u64Int logTableSize,
   int numNodes;
   int count2;
 
+#if defined(USE_MPI3_RMA)
+  MPI_Comm_rank(MPI_COMM_WORLD, &thisPeId);
+  MPI_Comm_size(MPI_COMM_WORLD, &numNodes);
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   thisPeId = shmem_my_pe();
   numNodes = shmem_n_pes();
   shmem_barrier_all();
-
+#endif
 
   /* setup: should not really be part of this timed routine */
   ran = starts(4*GlobalStartMyProc);
+#if defined(USE_MPI3_RMA)
+  // create *updates* & *count* window
+  MPI_Win_create(updates, sizeof(s64Int)*MAXTHREADS, sizeof(s64Int), MPI_INFO_NULL, MPI_COMM_WORLD, &updates_win);
+  MPI_Win_lock_all(MPI_MODE_NOCHECK, updates_win);
+  MPI_Win_create(&count, sizeof(s64Int), sizeof(s64Int), MPI_INFO_NULL, MPI_COMM_WORLD, &count_win);
+  MPI_Win_lock_all(MPI_MODE_NOCHECK, count_win); 
+  MPI_Barrier(MPI_COMM_WORLD);
+#endif
 
   niterate = ProcNumUpdates;
   logTableLocal = logTableSize - logNumProcs;
@@ -223,14 +244,25 @@ Power2NodesRandomAccessUpdate(u64Int logTableSize,
 
   for (iterate = 0; iterate < niterate; iterate++) {
       count = 0;
+#if defined(USE_MPI3_RMA)
+      MPI_Barrier(MPI_COMM_WORLD);
+#else
       shmem_barrier_all();
+#endif
       ran = (ran << 1) ^ ((s64Int) ran < ZERO64B ? POLY : ZERO64B);
       remote_proc = (ran >> logTableLocal) & (numNodes - 1);
+
+#if defined(USE_MPI3_RMA)
+      MPI_Fetch_and_op(&count, &remotecount, MPI_LONG, remote_proc, 0, MPI_SUM, count_win);
+      MPI_Win_flush(remote_proc, count_win);
+      MPI_Put(&ran, 1, MPI_LONG, remote_proc, remotecount, 1, MPI_LONG, updates_win);
+      MPI_Win_flush(remote_proc, updates_win);
+      MPI_Barrier(MPI_COMM_WORLD);
+#else
       remotecount = shmem_longlong_fadd(&count, 1, remote_proc);
       shmem_longlong_p(&updates[remotecount], ran, remote_proc);
-
       shmem_barrier_all();
-
+#endif
       for(i=0;i<count;i++) {
           datum = updates[i];
           index = datum & nlocalm1;
@@ -239,8 +271,15 @@ Power2NodesRandomAccessUpdate(u64Int logTableSize,
       }
   }
 
+#if defined(USE_MPI3_RMA)
+  MPI_Win_unlock_all(count_win);
+  MPI_Win_free(&count_win);
+  MPI_Win_unlock_all(updates_win);
+  MPI_Win_free(&updates_win);
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   shmem_barrier_all();
-
+#endif
 }
 
 HPCC_Params params;
@@ -251,9 +290,17 @@ int main(int argc, char **argv)
   time_t currentTime;
   int provided;
 
+#if defined(USE_MPI3_RMA)
+  MPI_Init(&argc, &argv);
+#else
   shmem_init();
+#endif
   HPCC_SHMEMRandomAccess( &params );
+#if defined(USE_MPI3_RMA)
+  MPI_Finalize();
+#else
   shmem_finalize();
+#endif
 
   return 0;
 }

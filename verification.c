@@ -40,7 +40,11 @@
 #include <hpcc.h>
 #include "RandomAccess.h"
 #include <stdio.h>
+#if defined(USE_MPI3_RMA)
+#include <mpi.h>
+#else
 #include <shmem.h>
+#endif
 
 /* Verification phase: local buckets to sort into */
 #define BUCKET_SIZE 1024
@@ -74,35 +78,64 @@ HPCC_Power2NodesSHMEMRandomAccessCheck(u64Int logTableSize,
 
   u64Int *LocalBuckets;     /* buckets used in verification phase */
   u64Int *GlobalBuckets;    /* buckets used in verification phase */
-
+#if defined(USE_MPI3_RMA)
+  MPI_Win global_bucket_win;
+#endif
+#if defined(USE_MPI3_RMA)
+#else
   static long int ipSync[_SHMEM_BCAST_SYNC_SIZE];
   static int ipWrk[_SHMEM_REDUCE_SYNC_SIZE];
   static long int lpSync[_SHMEM_BCAST_SYNC_SIZE];
   static long lpWrk[_SHMEM_REDUCE_SYNC_SIZE];
+#endif
   const int slot_size = BUCKET_SIZE+FIRST_SLOT;
-
+#if defined(USE_MPI3_RMA)
+#else
   for (i = 0; i < _SHMEM_BCAST_SYNC_SIZE; i += 1){
         ipSync[i] = _SHMEM_SYNC_VALUE;
         lpSync[i] = _SHMEM_SYNC_VALUE;
   }
+#endif
 
+#if defined(USE_MPI3_RMA)
+  MPI_Alloc_mem(sizeof(u64Int)*NumProcs*(slot_size), MPI_INFO_NULL, &LocalBuckets);
+  sAbort = 0; if (! LocalBuckets) sAbort = 1;
+  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Allreduce(&sAbort, &rAbort, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   LocalBuckets = shmem_malloc(sizeof(u64Int)*NumProcs*(slot_size));
   sAbort = 0; if (! LocalBuckets) sAbort = 1;
   shmem_barrier_all(); 
   shmem_int_sum_to_all(&rAbort, &sAbort, 1, 0, 0, NumProcs,ipWrk,ipSync );
   shmem_barrier_all(); 
+#endif
 
   if (rAbort > 0) {
     if (MyProc == 0) fprintf(stderr, "Failed to allocate memory for local buckets.\n");
     goto failed_localbuckets;
   }
+
+#if defined(USE_MPI3_RMA)
+  // allocate window for GlobalBuckets
+  MPI_Win_allocate(sizeof(u64Int)*NumProcs*(slot_size), sizeof(u64Int), MPI_INFO_NULL, 
+	  MPI_COMM_WORLD, &GlobalBuckets, &global_bucket_win);
+  MPI_Win_lock_all(MPI_MODE_NOCHECK, global_bucket_win);
+#else
   GlobalBuckets = shmem_malloc(sizeof(u64Int)*NumProcs*(slot_size));
+#endif
 
   sAbort = 0; if (! GlobalBuckets) sAbort = 1;
 
+#if defined(USE_MPI3_RMA)
+  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Allreduce(&sAbort, &rAbort, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   shmem_barrier_all();
   shmem_int_sum_to_all(&rAbort, &sAbort, 1, 0, 0, NumProcs,ipWrk,ipSync );
   shmem_barrier_all(); 
+#endif
 
   if (rAbort > 0) {
     if (MyProc == 0) fprintf(stderr, "Failed to allocate memory for global buckets.\n");
@@ -145,17 +178,29 @@ HPCC_Power2NodesSHMEMRandomAccessCheck(u64Int logTableSize,
 
     } /* End of sending loop */
 
+#if defined(USE_MPI3_RMA)
+    MPI_Barrier(MPI_COMM_WORLD);
+#else
     shmem_barrier_all();
+#endif
 
     LocalAllDone = HPCC_TRUE;
 
     /* Now move all the buckets to the appropriate pe */
+#if defined(USE_MPI3_RMA)
+    for (i=0 ; i<NumProcs ; i++)
+	MPI_Put(&LocalBuckets[slot_size*i], slot_size, MPI_UNSIGNED_LONG, i, 
+		slot_size*MyProc, slot_size, MPI_UNSIGNED_LONG, global_bucket_win);
 
+    MPI_Win_flush_all(global_bucket_win);
+    MPI_Barrier(MPI_COMM_WORLD);
+#else
     for (i=0 ; i<NumProcs ; i++)
          shmem_longlong_put(&GlobalBuckets[slot_size*MyProc],&LocalBuckets[slot_size*i],
                              slot_size,i);
-
+   
     shmem_barrier_all(); 
+#endif
 
     for (i = 0; i < NumProcs; i ++) {
       if(PeCheckDone[i] == HPCC_FALSE) {
@@ -178,11 +223,19 @@ HPCC_Power2NodesSHMEMRandomAccessCheck(u64Int logTableSize,
   *NumErrors = errors;
 
   free( PeCheckDone );
+
+#if defined(USE_MPI3_RMA)
+  MPI_Free_mem( LocalBuckets );
+  MPI_Win_unlock_all(global_bucket_win);
+  MPI_Win_free(&global_bucket_win);
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   shmem_free( GlobalBuckets );
+  shmem_free( LocalBuckets );
+#endif
 
   failed_globalbuckets:
-  shmem_free( LocalBuckets );
-
   failed_localbuckets:
+  
   return;
 }

@@ -154,7 +154,11 @@
 
 #include <stdio.h>
 
+#if defined(USE_MPI3_RMA)
+#include <mpi.h>
+#else
 #include <shmem.h>
+#endif
 
 /* Allocate main table (in global memory) */
 u64Int *HPCC_Table;
@@ -192,12 +196,14 @@ HPCC_SHMEMRandomAccess(HPCC_Params *params) {
   s64Int GlbNumUpdates;  /* for reduction */
 #endif
 
+#if defined(USE_MPI3_RMA)
+#else
   static long llpSync[_SHMEM_BCAST_SYNC_SIZE];
   static long long int llpWrk[_SHMEM_REDUCE_SYNC_SIZE];
 
   static long ipSync[_SHMEM_BCAST_SYNC_SIZE];
   static int ipWrk[_SHMEM_REDUCE_SYNC_SIZE];
-
+#endif
   FILE *outFile = NULL;
   double *GUPs;
   double *temp_GUPs;
@@ -205,19 +211,23 @@ HPCC_SHMEMRandomAccess(HPCC_Params *params) {
 
   int numthreads;
 
-
+#if defined(USE_MPI3_RMA)
+#else
   for (i = 0; i < _SHMEM_BCAST_SYNC_SIZE; i += 1){
         ipSync[i] = _SHMEM_SYNC_VALUE;
         llpSync[i] = _SHMEM_SYNC_VALUE;
   }
-
+#endif
 
   params->SHMEMGUPs = -1;
   GUPs = &params->SHMEMGUPs;
-
+#if defined(USE_MPI3_RMA)
+  MPI_Comm_size(MPI_COMM_WORLD, &NumProcs);
+  MPI_Comm_rank(MPI_COMM_WORLD, &MyProc);
+#else
   NumProcs = shmem_n_pes();
   MyProc = shmem_my_pe();
-
+#endif
   if (0 == MyProc) {
     outFile = stdout;
     setbuf(outFile, NULL);
@@ -258,12 +268,22 @@ HPCC_SHMEMRandomAccess(HPCC_Params *params) {
 
   if (! HPCC_Table) sAbort = 1;
 
-
-
+  // Note: Is there a need to sandwich collectives inside barrier?
+#if defined(USE_MPI3_RMA)
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   shmem_barrier_all();
+#endif
+#if defined(USE_MPI3_RMA)
+  MPI_Allreduce(&sAbort, &rAbort, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+#else
   shmem_int_sum_to_all(&rAbort, &sAbort, 1, 0, 0, NumProcs, ipWrk, ipSync);
+#endif
+#if defined(USE_MPI3_RMA)
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   shmem_barrier_all();
-
+#endif
   if (rAbort > 0) {
     if (MyProc == 0) fprintf(outFile, "Failed to allocate memory for the main table.\n");
     /* check all allocations in case there are new added and their order changes */
@@ -297,7 +317,11 @@ HPCC_SHMEMRandomAccess(HPCC_Params *params) {
   for (i=0; i<LocalTableSize; i++)
     HPCC_Table[i] = i + GlobalStartMyProc;
 
+#if defined(USE_MPI3_RMA)
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   shmem_barrier_all();
+#endif
 
   RealTime = -RTSEC();
 
@@ -305,8 +329,11 @@ HPCC_SHMEMRandomAccess(HPCC_Params *params) {
                                      MinLocalTableSize, GlobalStartMyProc, Top,
                                      logNumProcs, NumProcs, Remainder,
                                      MyProc, ProcNumUpdates);
-
+#if defined(USE_MPI3_RMA)
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   shmem_barrier_all();
+#endif
 
   /* End timed section */
 
@@ -326,9 +353,15 @@ HPCC_SHMEMRandomAccess(HPCC_Params *params) {
   }
   /* distribute result to all nodes */
   temp_GUPs = GUPs;
+#if defined(USE_MPI3_RMA)
+  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Bcast(GUPs, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   shmem_barrier_all();
   shmem_broadcast64(GUPs,temp_GUPs,1,0,0,0,NumProcs,llpSync);
   shmem_barrier_all();
+#endif
 
   /* Verification phase */
 
@@ -336,16 +369,21 @@ HPCC_SHMEMRandomAccess(HPCC_Params *params) {
 
   RealTime = -RTSEC();
 
-
   HPCC_Power2NodesSHMEMRandomAccessCheck(logTableSize, TableSize, LocalTableSize,
                                     GlobalStartMyProc,
                                     logNumProcs, NumProcs,
                                     MyProc, ProcNumUpdates,
                                     &NumErrors);
-
+  
+#if defined(USE_MPI3_RMA)
+  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Allreduce(&NumErrors, &GlbNumErrors, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   shmem_barrier_all(); 
   shmem_longlong_sum_to_all( &GlbNumErrors,  &NumErrors, 1, 0,0, NumProcs,llpWrk, llpSync);
   shmem_barrier_all(); 
+#endif
 
   /* End timed section */
 
@@ -373,8 +411,11 @@ HPCC_SHMEMRandomAccess(HPCC_Params *params) {
   failed_table:
 
   if (0 == MyProc) if (outFile != stderr) fclose( outFile );
-
+#if defined(USE_MPI3_RMA)
+  MPI_Barrier(MPI_COMM_WORLD);
+#else
   shmem_barrier_all();
+#endif
 
   return 0;
 }

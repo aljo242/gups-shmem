@@ -39,16 +39,19 @@
 #
 # OpenSHMEM compiler commandss
 #
-CC             = oshcc
+MPILOC	       = /home/sg/builds/mpich-intel
+#CC             = oshcc
+CC             = $(MPILOC)/bin/mpicc
 LD             = $(CC)
 
-CFLAGS         = -O3
+CFLAGS         = -O3 -DUSE_MPI3_RMA
 
 #
 # any extra paths/flags needed
 #
 SHMEM_INC_PATH =
-SHMEM_LDFLAGS  =
+#SHMEM_LDFLAGS  =
+SHMEM_LDFLAGS  = -L$(MPILOC)/lib -lopa -lmpich -lmpl
 SHMEM_LIBS     =
 
 CPPFLAGS       = -I./include $(SHMEM_INC_PATH)
